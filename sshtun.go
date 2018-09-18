@@ -60,7 +60,7 @@ const (
 // The SSH user and port can be changed with SetUser and SetPort.
 // The local and remote hosts can be changed to something different than localhost with SetLocalHost and SetRemoteHost.
 // The states of the tunnel can be received throgh a callback function with SetConnState.
-func New(server string, localPort int, remotePort int) *SSHTun {
+func New(localPort int, server string, remotePort int) *SSHTun {
 	return &SSHTun{
 		Mutex:      &sync.Mutex{},
 		server:     server,
