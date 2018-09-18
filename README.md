@@ -12,7 +12,7 @@ By default it reads the default linux ssh private key location `$HOME/.ssh/id_rs
 
 ## Example
 
-```
+```go
 package main
 
 import (
