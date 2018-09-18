@@ -23,8 +23,8 @@ import (
 )
 
 func main() {
-    // We want to connect to port 8080 on our machine to acces port 80 on mysuperhost.com
-    sshTun := sshtun.New(8080, "mysuperhost.com", 80)
+    // We want to connect to port 8080 on our machine to acces port 80 on my.super.host.com
+    sshTun := sshtun.New(8080, "my.super.host.com", 80)
 
     // We enable debug messages to see what happens
     sshTun.SetDebug(true)
