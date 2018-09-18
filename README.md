@@ -1,5 +1,7 @@
 # sshtun
 
+[![GoDoc](https://godoc.org/github.com/golang/gddo?status.svg)](https://godoc.org/github.com/rgzr/sshtun)
+
 sshtun is a Go package that provides a SSH tunnel with port forwarding supporting both password and key auth methods.
 
 By default it reads the default linux ssh private key location `$HOME/.ssh/id_rsa`.
