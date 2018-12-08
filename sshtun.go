@@ -16,26 +16,43 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+type Endpoint struct {
+	Host       string
+	Port       int
+	UnixSocket string
+}
+
+func (e *Endpoint) connectionString() string {
+	if e.UnixSocket != "" {
+		return e.UnixSocket
+	}
+	return fmt.Sprintf("%s:%d", e.Host, e.Port)
+}
+
+func (e *Endpoint) connectionType() string {
+	if e.UnixSocket != "" {
+		return "unix"
+	}
+	return "tcp"
+}
+
 // SSHTun represents a SSH tunnel
 type SSHTun struct {
 	*sync.Mutex
-	ctx        context.Context
-	cancel     context.CancelFunc
-	errCh      chan error
-	server     string
-	serverPort int
-	user       string
-	password   string
-	keyFile    string
-	useKey     bool
-	localHost  string
-	localPort  int
-	remoteHost string
-	remotePort int
-	started    bool
-	timeout    time.Duration
-	debug      bool
-	connState  func(*SSHTun, ConnState)
+	ctx       context.Context
+	cancel    context.CancelFunc
+	errCh     chan error
+	user      string
+	password  string
+	keyFile   string
+	useKey    bool
+	server    Endpoint
+	local     Endpoint
+	remote    Endpoint
+	started   bool
+	timeout   time.Duration
+	debug     bool
+	connState func(*SSHTun, ConnState)
 }
 
 // ConnState represents the state of the SSH tunnel. It's returned to an optional function provided to SetConnState.
@@ -62,26 +79,55 @@ const (
 // The states of the tunnel can be received throgh a callback function with SetConnState.
 func New(localPort int, server string, remotePort int) *SSHTun {
 	return &SSHTun{
-		Mutex:      &sync.Mutex{},
-		server:     server,
-		serverPort: 22,
-		user:       "root",
-		password:   "",
-		keyFile:    "",
-		useKey:     true,
-		localHost:  "localhost",
-		localPort:  localPort,
-		remoteHost: "localhost",
-		remotePort: remotePort,
-		started:    false,
-		timeout:    time.Second * 15,
-		debug:      false,
+		Mutex: &sync.Mutex{},
+		server: Endpoint{
+			Host: server,
+			Port: 22,
+		},
+		user:     "root",
+		password: "",
+		keyFile:  "",
+		useKey:   true,
+		local: Endpoint{
+			Host: "localhost",
+			Port: localPort,
+		},
+		remote: Endpoint{
+			Host: "localhost",
+			Port: remotePort,
+		},
+		started: false,
+		timeout: time.Second * 15,
+		debug:   false,
+	}
+}
+
+func NewUnix(localUnixSocket string, server string, remoteUnixSocket string) *SSHTun {
+	return &SSHTun{
+		Mutex: &sync.Mutex{},
+		server: Endpoint{
+			Host: server,
+			Port: 22,
+		},
+		user:     "root",
+		password: "",
+		keyFile:  "",
+		useKey:   true,
+		local: Endpoint{
+			UnixSocket: localUnixSocket,
+		},
+		remote: Endpoint{
+			UnixSocket: remoteUnixSocket,
+		},
+		started: false,
+		timeout: time.Second * 15,
+		debug:   false,
 	}
 }
 
 // SetPort changes the port where the SSH connection will be made.
 func (tun *SSHTun) SetPort(port int) {
-	tun.serverPort = port
+	tun.server.Port = port
 }
 
 // SetUser changes the user used to make the SSH connection.
@@ -104,12 +150,12 @@ func (tun *SSHTun) SetPassword(password string) {
 
 // SetLocalHost sets the local host to redirect (defaults to localhost)
 func (tun *SSHTun) SetLocalHost(host string) {
-	tun.localHost = host
+	tun.local.Host = host
 }
 
 // SetRemoteHost sets the remote host to redirect (defaults to localhost)
 func (tun *SSHTun) SetRemoteHost(host string) {
-	tun.remoteHost = host
+	tun.remote.Host = host
 }
 
 // SetTimeout sets the connection timeouts (defaults to 15 seconds).
@@ -166,13 +212,9 @@ func (tun *SSHTun) Start() error {
 		config.Auth = []ssh.AuthMethod{ssh.Password(tun.password)}
 	}
 
-	// Connection info
-	local := fmt.Sprintf("%s:%d", tun.localHost, tun.localPort)
-	server := fmt.Sprintf("%s:%d", tun.server, tun.serverPort)
-	remote := fmt.Sprintf("%s:%d", tun.remoteHost, tun.remotePort)
-
+	local := tun.local.connectionString()
 	// Local listener
-	localList, err := net.Listen("tcp", local)
+	localList, err := net.Listen(tun.local.connectionType(), local)
 	if err != nil {
 		return tun.errNotStarted(fmt.Errorf("Local listen on %s failed: %s", local, err.Error()))
 	}
@@ -194,7 +236,7 @@ func (tun *SSHTun) Start() error {
 			}
 
 			// Launch the forward
-			go tun.forward(localConn, config, local, server, remote)
+			go tun.forward(localConn, config)
 		}
 	}()
 
@@ -245,10 +287,14 @@ func (tun *SSHTun) errStarted(err error) {
 	tun.Unlock()
 }
 
-func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig, local string, server string, remote string) {
+func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig) {
 	defer localConn.Close()
 
-	sshConn, err := ssh.Dial("tcp", server, config)
+	local := tun.local.connectionString()
+	server := tun.server.connectionString()
+	remote := tun.remote.connectionString()
+
+	sshConn, err := ssh.Dial(tun.server.connectionType(), server, config)
 	if err != nil {
 		tun.errStarted(fmt.Errorf("SSH connection to %s failed: %s", server, err.Error()))
 		return
@@ -258,7 +304,7 @@ func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig, local s
 		log.Printf("SSH connection to %s done", server)
 	}
 
-	remoteConn, err := sshConn.Dial("tcp", remote)
+	remoteConn, err := sshConn.Dial(tun.remote.connectionType(), remote)
 	if err != nil {
 		if tun.debug {
 			log.Printf("Remote dial to %s failed: %s", remote, err.Error())
