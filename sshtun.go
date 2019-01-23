@@ -13,7 +13,7 @@ import (
 	"io/ioutil"
 	"os/user"
 
-	"golang.org/x/crypto/ssh"
+	"github.com/golang/crypto/ssh"
 )
 
 type Endpoint struct {
@@ -203,11 +203,18 @@ func (tun *SSHTun) Start() error {
 		if err != nil {
 			return tun.errNotStarted(fmt.Errorf("Error reading SSH key file %s: %s", tun.keyFile, err.Error()))
 		}
-		key, err := ssh.ParsePrivateKey(buf)
+		var key ssh.Signer
+		if tun.password == "" {
+			key, err = ssh.ParsePrivateKey(buf)
+		} else {
+			key, err = ssh.ParsePrivateKeyWithPassphrase(buf, []byte(tun.password))
+		}
 		if err != nil {
 			return tun.errNotStarted(fmt.Errorf("Error parsing key file %s: %s", tun.keyFile, err.Error()))
 		}
-		config.Auth = []ssh.AuthMethod{ssh.PublicKeys(key)}
+
+		config.Auth = []ssh.AuthMethod{key}
+
 	} else {
 		config.Auth = []ssh.AuthMethod{ssh.Password(tun.password)}
 	}
