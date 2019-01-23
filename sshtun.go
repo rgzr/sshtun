@@ -213,7 +213,7 @@ func (tun *SSHTun) Start() error {
 			return tun.errNotStarted(fmt.Errorf("Error parsing key file %s: %s", tun.keyFile, err.Error()))
 		}
 
-		config.Auth = []ssh.AuthMethod{key}
+		config.Auth = []ssh.AuthMethod{ssh.PublicKeys(key)}
 
 	} else {
 		config.Auth = []ssh.AuthMethod{ssh.Password(tun.password)}
