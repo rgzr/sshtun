@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"os/user"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 type Endpoint struct {
@@ -36,23 +38,41 @@ func (e *Endpoint) connectionType() string {
 	return "tcp"
 }
 
+// AuthType is the type of authentication to use for SSH.
+type AuthType int
+
+const (
+	// AuthTypeKeyFile uses the keys from a SSH key file read from the system.
+	AuthTypeKeyFile AuthType = iota
+	// AuthTypePassword uses a password directly.
+	AuthTypePassword
+	// AuthTypeSSHAgent will use registered users in the ssh-agent.
+	AuthTypeSSHAgent
+	// AuthTypeAuto tries to get the authentication method automatically. See SSHTun.Start for details on
+	// this.
+	AuthTypeAuto
+)
+
 // SSHTun represents a SSH tunnel
 type SSHTun struct {
 	*sync.Mutex
-	ctx       context.Context
-	cancel    context.CancelFunc
-	errCh     chan error
-	user      string
-	password  string
-	keyFile   string
-	useKey    bool
-	server    Endpoint
-	local     Endpoint
-	remote    Endpoint
-	started   bool
-	timeout   time.Duration
-	debug     bool
-	connState func(*SSHTun, ConnState)
+	ctx      context.Context
+	cancel   context.CancelFunc
+	errCh    chan error
+	user     string
+	authType AuthType
+	// authDetail is auxiliary information for the authentication. It's content depends on the auth type.
+	// Key file: authDetail is the path to the key file (may be empty).
+	// Password: authDetail is the password.
+	// SSH agent: authDetail is not used.
+	authDetail string
+	server     Endpoint
+	local      Endpoint
+	remote     Endpoint
+	started    bool
+	timeout    time.Duration
+	debug      bool
+	connState  func(*SSHTun, ConnState)
 }
 
 // ConnState represents the state of the SSH tunnel. It's returned to an optional function provided to SetConnState.
@@ -72,8 +92,10 @@ const (
 )
 
 // New creates a new SSH tunnel to the specified server redirecting a port on local localhost to a port on remote localhost.
-// By default the SSH connection is made to port 22 as root and using the default linux private key location ($HOME/.ssh/id_rsa).
-// Calling SetPassword will change the authentication to password based and with SetKeyFile another key can be specified.
+// By default the SSH connection is made to port 22 as root and using automatic detection of the authentication
+// method (see Start for details on this).
+// Calling SetPassword will change the authentication to password based.
+// Calling SetKeyFile will change the authentication to keyfile based with an optional key file.
 // The SSH user and port can be changed with SetUser and SetPort.
 // The local and remote hosts can be changed to something different than localhost with SetLocalHost and SetRemoteHost.
 // The states of the tunnel can be received throgh a callback function with SetConnState.
@@ -84,10 +106,9 @@ func New(localPort int, server string, remotePort int) *SSHTun {
 			Host: server,
 			Port: 22,
 		},
-		user:     "root",
-		password: "",
-		keyFile:  "",
-		useKey:   true,
+		user:       "root",
+		authType:   AuthTypeAuto,
+		authDetail: "",
 		local: Endpoint{
 			Host: "localhost",
 			Port: localPort,
@@ -109,10 +130,9 @@ func NewUnix(localUnixSocket string, server string, remoteUnixSocket string) *SS
 			Host: server,
 			Port: 22,
 		},
-		user:     "root",
-		password: "",
-		keyFile:  "",
-		useKey:   true,
+		user:       "root",
+		authType:   AuthTypeAuto,
+		authDetail: "",
 		local: Endpoint{
 			UnixSocket: localUnixSocket,
 		},
@@ -138,14 +158,14 @@ func (tun *SSHTun) SetUser(user string) {
 // SetKeyFile changes the authentication to key-based and uses the specified file.
 // Leaving it empty defaults to the default linux private key location ($HOME/.ssh/id_rsa).
 func (tun *SSHTun) SetKeyFile(file string) {
-	tun.keyFile = file
-	tun.useKey = true
+	tun.authDetail = file
+	tun.authType = AuthTypeKeyFile
 }
 
 // SetPassword changes the authentication to password-based and uses the specified password.
 func (tun *SSHTun) SetPassword(password string) {
-	tun.password = password
-	tun.useKey = false
+	tun.authDetail = password
+	tun.authType = AuthTypePassword
 }
 
 // SetLocalHost sets the local host to redirect (defaults to localhost)
@@ -175,6 +195,11 @@ func (tun *SSHTun) SetConnState(connStateFun func(*SSHTun, ConnState)) {
 }
 
 // Start starts the SSH tunnel. After this call, all Set* methods will have no effect until Close is called.
+// Note on SSH authentication: in case the tunnel's authType is set to AuthTypeAuto the following will happen:
+// it will try to initialize an authentication method based on a key file with authDetail optionally pointing
+// to a key file. If that doesn't succeed it will try to use the SSH agent. If that fails the whole
+// authentication fails. That means if you want to use password authentication, you have to specify that
+// explicitly.
 func (tun *SSHTun) Start() error {
 	tun.Lock()
 
@@ -183,33 +208,9 @@ func (tun *SSHTun) Start() error {
 	}
 
 	// SSH config
-	config := &ssh.ClientConfig{
-		User: tun.user,
-		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-			return nil
-		},
-		Timeout: tun.timeout,
-	}
-	if tun.useKey {
-		if tun.keyFile == "" {
-			usr, _ := user.Current()
-			if usr != nil {
-				tun.keyFile = usr.HomeDir + "/.ssh/id_rsa"
-			} else {
-				tun.keyFile = "/root/.ssh/id_rsa"
-			}
-		}
-		buf, err := ioutil.ReadFile(tun.keyFile)
-		if err != nil {
-			return tun.errNotStarted(fmt.Errorf("Error reading SSH key file %s: %s", tun.keyFile, err.Error()))
-		}
-		key, err := ssh.ParsePrivateKey(buf)
-		if err != nil {
-			return tun.errNotStarted(fmt.Errorf("Error parsing key file %s: %s", tun.keyFile, err.Error()))
-		}
-		config.Auth = []ssh.AuthMethod{ssh.PublicKeys(key)}
-	} else {
-		config.Auth = []ssh.AuthMethod{ssh.Password(tun.password)}
+	config, err := tun.initSSHConfig()
+	if err != nil {
+		return tun.errNotStarted(err)
 	}
 
 	local := tun.local.connectionString()
@@ -285,6 +286,85 @@ func (tun *SSHTun) errStarted(err error) {
 		tun.errCh <- err
 	}
 	tun.Unlock()
+}
+
+func (tun *SSHTun) initSSHConfig() (*ssh.ClientConfig, error) {
+	config := &ssh.ClientConfig{
+		User: tun.user,
+		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			return nil
+		},
+		Timeout: tun.timeout,
+	}
+
+	authMethod, err := tun.getSSHAuthMethod()
+	if err != nil {
+		return nil, err
+	}
+
+	config.Auth = []ssh.AuthMethod{authMethod}
+
+	return config, nil
+}
+
+func (tun *SSHTun) getSSHAuthMethod() (ssh.AuthMethod, error) {
+	switch tun.authType {
+	case AuthTypeKeyFile:
+		return tun.getSSHAuthMethodForKeyFile()
+	case AuthTypePassword:
+		return ssh.Password(tun.authDetail), nil
+	case AuthTypeSSHAgent:
+		return tun.getSSHAuthMethodForSSHAgent()
+	case AuthTypeAuto:
+		method, err := tun.getSSHAuthMethodForKeyFile()
+		if err != nil {
+			return tun.getSSHAuthMethodForSSHAgent()
+		}
+		return method, nil
+	default:
+		return nil, fmt.Errorf("unknown auth type: %d", tun.authType)
+	}
+}
+
+func (tun *SSHTun) getSSHAuthMethodForKeyFile() (ssh.AuthMethod, error) {
+	if tun.authDetail == "" {
+		usr, _ := user.Current()
+		if usr != nil {
+			tun.authDetail = usr.HomeDir + "/.ssh/id_rsa"
+		} else {
+			tun.authDetail = "/root/.ssh/id_rsa"
+		}
+	}
+	buf, err := ioutil.ReadFile(tun.authDetail)
+	if err != nil {
+		return nil, fmt.Errorf("Error reading SSH key file %s: %s", tun.authDetail, err.Error())
+	}
+	key, err := ssh.ParsePrivateKey(buf)
+	if err != nil {
+		return nil, fmt.Errorf("Error parsing key file %s: %s", tun.authDetail, err.Error())
+	}
+
+	return ssh.PublicKeys(key), nil
+}
+
+func (tun *SSHTun) getSSHAuthMethodForSSHAgent() (ssh.AuthMethod, error) {
+	conn, err := net.Dial("unix", os.Getenv("SSH_AUTH_SOCK"))
+	if err != nil {
+		return nil, fmt.Errorf("Failed to open linux socket: %s", err)
+	}
+
+	agentClient := agent.NewClient(conn)
+
+	signers, err := agentClient.Signers()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ssh-agent signers: %s", err)
+	}
+
+	if len(signers) == 0 {
+		return nil, fmt.Errorf("received zero signers from ssh-agent. Use 'ssh-add' to add keys to agent")
+	}
+
+	return ssh.PublicKeys(signers[0]), nil
 }
 
 func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig) {
