@@ -4,7 +4,7 @@
 
 sshtun is a Go package that provides a SSH tunnel with port forwarding supporting both password and key auth methods.
 
-By default it reads the default linux ssh private key location `$HOME/.ssh/id_rsa`.
+By default it reads the default linux ssh private key location `$HOME/.ssh/id_rsa`, but other key can be specified.
 
 ## Installation
 
@@ -23,7 +23,7 @@ import (
 )
 
 func main() {
-    // We want to connect to port 8080 on our machine to acces port 80 on my.super.host.com
+    // We want to connect to port 8080 on our machine to access port 80 on my.super.host.com
     sshTun := sshtun.New(8080, "my.super.host.com", 80)
 
     // We enable debug messages to see what happens
