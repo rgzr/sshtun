@@ -46,6 +46,10 @@ const (
 	AuthTypeKeyFile AuthType = iota
 	// AuthTypeEncryptedKeyFile uses the keys from an encrypted SSH key file read from the system.
 	AuthTypeEncryptedKeyFile
+	// AuthTypeKeyReader uses the keys from a SSH key reader.
+	AuthTypeKeyReader
+	// AuthTypeEncryptedKeyReader uses the keys from an encrypted SSH key reader.
+	AuthTypeEncryptedKeyReader
 	// AuthTypePassword uses a password directly.
 	AuthTypePassword
 	// AuthTypeSSHAgent will use registered users in the ssh-agent.
@@ -58,20 +62,21 @@ const (
 // SSHTun represents a SSH tunnel
 type SSHTun struct {
 	*sync.Mutex
-	ctx          context.Context
-	cancel       context.CancelFunc
-	errCh        chan error
-	user         string
-	authType     AuthType
-	authKeyFile  string
-	authPassword string
-	server       Endpoint
-	local        Endpoint
-	remote       Endpoint
-	started      bool
-	timeout      time.Duration
-	debug        bool
-	connState    func(*SSHTun, ConnState)
+	ctx           context.Context
+	cancel        context.CancelFunc
+	errCh         chan error
+	user          string
+	authType      AuthType
+	authKeyFile   string
+	authKeyReader io.Reader
+	authPassword  string
+	server        Endpoint
+	local         Endpoint
+	remote        Endpoint
+	started       bool
+	timeout       time.Duration
+	debug         bool
+	connState     func(*SSHTun, ConnState)
 }
 
 // ConnState represents the state of the SSH tunnel. It's returned to an optional function provided to SetConnState.
@@ -168,6 +173,21 @@ func (tun *SSHTun) SetKeyFile(file string) {
 func (tun *SSHTun) SetEncryptedKeyFile(file string, password string) {
 	tun.authType = AuthTypeEncryptedKeyFile
 	tun.authKeyFile = file
+	tun.authPassword = password
+}
+
+// SetKeyReader changes the authentication to key-based and uses the specified reader.
+// Leaving it empty defaults to the default linux private key location ($HOME/.ssh/id_rsa).
+func (tun *SSHTun) SetKeyReader(reader io.Reader) {
+	tun.authType = AuthTypeKeyReader
+	tun.authKeyReader = reader
+}
+
+// SetEncryptedKeyReader changes the authentication to encrypted key-based and uses the specified reader and password.
+// Leaving it empty defaults to the default linux private key location ($HOME/.ssh/id_rsa).
+func (tun *SSHTun) SetEncryptedKeyReader(reader io.Reader, password string) {
+	tun.authType = AuthTypeEncryptedKeyReader
+	tun.authKeyReader = reader
 	tun.authPassword = password
 }
 
@@ -326,6 +346,10 @@ func (tun *SSHTun) getSSHAuthMethod() (ssh.AuthMethod, error) {
 		return tun.getSSHAuthMethodForKeyFile(false)
 	case AuthTypeEncryptedKeyFile:
 		return tun.getSSHAuthMethodForKeyFile(true)
+	case AuthTypeKeyReader:
+		return tun.getSSHAuthMethodForKeyReader(false)
+	case AuthTypeEncryptedKeyReader:
+		return tun.getSSHAuthMethodForKeyReader(true)
 	case AuthTypePassword:
 		return ssh.Password(tun.authPassword), nil
 	case AuthTypeSSHAgent:
@@ -342,7 +366,6 @@ func (tun *SSHTun) getSSHAuthMethod() (ssh.AuthMethod, error) {
 }
 
 func (tun *SSHTun) getSSHAuthMethodForKeyFile(encrypted bool) (ssh.AuthMethod, error) {
-	var key ssh.Signer
 	if tun.authKeyFile == "" {
 		usr, _ := user.Current()
 		if usr != nil {
@@ -355,15 +378,37 @@ func (tun *SSHTun) getSSHAuthMethodForKeyFile(encrypted bool) (ssh.AuthMethod, e
 	if err != nil {
 		return nil, fmt.Errorf("Error reading SSH key file %s: %s", tun.authKeyFile, err.Error())
 	}
+	key, err := tun.parsePrivateKey(buf, encrypted)
+	if err != nil {
+		return nil, fmt.Errorf("Error reading SSH key file %s: %s", tun.authKeyFile, err.Error())
+	}
+	return key, nil
+}
+
+func (tun *SSHTun) getSSHAuthMethodForKeyReader(encrypted bool) (ssh.AuthMethod, error) {
+	buf, err := ioutil.ReadAll(tun.authKeyReader)
+	if err != nil {
+		return nil, fmt.Errorf("Error reading from SSH key reader: %s", err.Error())
+	}
+	key, err := tun.parsePrivateKey(buf, encrypted)
+	if err != nil {
+		return nil, fmt.Errorf("Error reading from SSH key reader: %s", err.Error())
+	}
+	return key, nil
+}
+
+func (tun *SSHTun) parsePrivateKey(buf []byte, encrypted bool) (ssh.AuthMethod, error) {
+	var key ssh.Signer
+	var err error
 	if encrypted {
 		key, err = ssh.ParsePrivateKeyWithPassphrase(buf, []byte(tun.authPassword))
 		if err != nil {
-			return nil, fmt.Errorf("Error parsing encrypted key file %s: %s", tun.authKeyFile, err.Error())
+			return nil, fmt.Errorf("Error parsing encrypted key: %s", err.Error())
 		}
 	} else {
 		key, err = ssh.ParsePrivateKey(buf)
 		if err != nil {
-			return nil, fmt.Errorf("Error parsing key file %s: %s", tun.authKeyFile, err.Error())
+			return nil, fmt.Errorf("Error parsing key: %s", err.Error())
 		}
 	}
 	return ssh.PublicKeys(key), nil
