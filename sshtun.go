@@ -471,19 +471,6 @@ func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig) {
 	if tun.debug {
 		log.Printf("SSH connection to %s done", server)
 	}
-	
-	go func() {
-		// check if connection is still alive
-		err := sshConn.Wait()
-		if err != nil {
-			if tun.debug {
-				log.Printf("SSH connection to %s has shut down: %s", server, err.Error())
-			}
-		}
-		if tun.connState != nil {
-			tun.connState(tun, StateRemoteDropped)
-		}
-	}()
 
 	remoteConn, err := sshConn.Dial(tun.remote.connectionType(), remote)
 	if err != nil {
@@ -509,6 +496,21 @@ func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig) {
 	}
 
 	myCtx, myCancel := context.WithCancel(tun.ctx)
+	
+	go func() {
+		// check if connection is still alive
+		err := sshConn.Wait()
+		if err != nil {
+			if tun.debug {
+				log.Printf("SSH connection to %s has shut down: %s", server, err.Error())
+			}
+		}
+		if tun.connState != nil {
+			tun.connState(tun, StateRemoteDropped)
+		}
+		myCancel()
+		return
+	}()
 
 	go func() {
 		_, err = io.Copy(remoteConn, localConn)
