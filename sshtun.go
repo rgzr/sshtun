@@ -93,6 +93,25 @@ const (
 	// StateStarted represents a tunnel ready to accept connections.
 	// A call to stop or an error will make the state to transition to StateStopped.
 	StateStarted
+	
+		// StateAccepted represents a (local) listener connection. This state gets triggered when a new incoming connection is made.
+	StateAccepted
+
+	// StateOpen represents the last part of a successful remote connection proccess.
+	// This state's purpose is to signal when the connection is established and fully usable.
+	StateOpen
+
+	// StateClosed represents a finished connection cycle as an internal proccess of the package.
+	// When triggered it means a successful connection has been terminated.
+	StateClosed
+
+	// StateFailed represents a remote dial to server failure, while the underline SSH connection is established.
+	StateFailed
+
+	// StateRemoteDropped represents a shut down SSH connection from server.
+	// This state is the real remote server connection drop, not internal procedure of the package.
+	StateRemoteDropped
+)
 )
 
 // New creates a new SSH tunnel to the specified server redirecting a port on local localhost to a port on remote localhost.
@@ -267,6 +286,9 @@ func (tun *SSHTun) Start() error {
 			}
 			if tun.debug {
 				log.Printf("Accepted connection from %s", localConn.RemoteAddr().String())
+			}
+			if tun.connState != nil {
+				tun.connState(tun, StateAccepted)
 			}
 
 			// Launch the forward
@@ -450,11 +472,27 @@ func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig) {
 	if tun.debug {
 		log.Printf("SSH connection to %s done", server)
 	}
+	
+	go func() {
+		// check if connection is still alive
+		err := sshConn.Wait()
+		if err != nil {
+			if tun.debug {
+				log.Printf("SSH connection to %s has shut down: %s", server, err.Error())
+			}
+		}
+		if tun.connState != nil {
+			tun.connState(tun, StateRemoteDropped)
+		}
+	}()
 
 	remoteConn, err := sshConn.Dial(tun.remote.connectionType(), remote)
 	if err != nil {
 		if tun.debug {
 			log.Printf("Remote dial to %s failed: %s", remote, err.Error())
+		}
+		if tun.connState != nil {
+			tun.connState(tun, StateFailed)
 		}
 		return
 	}
@@ -466,6 +504,9 @@ func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig) {
 	connStr := fmt.Sprintf("%s -(tcp)> %s -(ssh)> %s -(tcp)> %s", localConn.RemoteAddr().String(), local, server, remote)
 	if tun.debug {
 		log.Printf("SSH tunnel OPEN: %s", connStr)
+	}
+	if tun.connState != nil {
+		tun.connState(tun, StateOpen)
 	}
 
 	myCtx, myCancel := context.WithCancel(tun.ctx)
@@ -493,6 +534,9 @@ func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig) {
 		myCancel()
 		if tun.debug {
 			log.Printf("SSH tunnel CLOSE: %s", connStr)
+		}
+		if tun.connState != nil {
+			tun.connState(tun, StateClosed)
 		}
 	}
 }
