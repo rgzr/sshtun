@@ -41,8 +41,18 @@ func main() {
             log.Printf("STATE is Starting")
         case sshtun.StateStarted:
             log.Printf("STATE is Started")
+        case sshtun.StateAccepted:
+            log.Printf("STATE is Accepted")
+        case sshtun.StateOpen:
+            log.Printf("STATE is Open")
+        case sshtun.StateClosed:
+            log.Printf("STATE is Closed")
+        case sshtun.StateFailed:
+            log.Printf("STATE is Failed")
+        case sshtun.StateRemoteDropped:
+            log.Printf("STATE is Dropped")
         case sshtun.StateStopped:
-            log.Printf("STATE is Stopped")
+        log.Printf("STATE is Stopped")
         }
     })
 
