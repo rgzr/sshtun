@@ -94,7 +94,7 @@ const (
 	// A call to stop or an error will make the state to transition to StateStopped.
 	StateStarted
 	
-		// StateAccepted represents a (local) listener connection. This state gets triggered when a new incoming connection is made.
+	// StateAccepted represents a (local) listener connection. This state gets triggered when a new incoming connection is made.
 	StateAccepted
 
 	// StateOpen represents the last part of a successful remote connection proccess.
