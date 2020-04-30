@@ -52,7 +52,7 @@ func main() {
         case sshtun.StateRemoteDropped:
             log.Printf("STATE is Dropped")
         case sshtun.StateStopped:
-        log.Printf("STATE is Stopped")
+            log.Printf("STATE is Stopped")
         }
     })
 
