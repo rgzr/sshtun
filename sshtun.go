@@ -112,7 +112,6 @@ const (
 	// This state is the real remote server connection drop, not internal procedure of the package.
 	StateRemoteDropped
 )
-)
 
 // New creates a new SSH tunnel to the specified server redirecting a port on local localhost to a port on remote localhost.
 // By default the SSH connection is made to port 22 as root and using automatic detection of the authentication
