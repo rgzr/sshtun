@@ -498,7 +498,6 @@ func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig) {
 	myCtx, myCancel := context.WithCancel(tun.ctx)
 	
 	go func() {
-		// check if connection is still alive
 		err := sshConn.Wait()
 		if err != nil {
 			if tun.debug {
