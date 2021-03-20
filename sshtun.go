@@ -252,8 +252,8 @@ func (tun *SSHTun) SetConnState(connStateFun func(*SSHTun, ConnState)) {
 	tun.connState = connStateFun
 }
 
-// SetConnState specifies an optional callback function that is called when a SSH tunnel changes state.
-// See the ConnState type and associated constants for details.
+// SetForwardedConnState specifies an optional callback function that is called when a forwarded connection changes state.
+// See the ForwardedConnState type and associated constants for details.
 func (tun *SSHTun) SetForwardedConnState(forwardedConnState func(*SSHTun, ForwardedConnState)) {
 	tun.forwardedConnState = forwardedConnState
 }
