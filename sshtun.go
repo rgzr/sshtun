@@ -77,7 +77,7 @@ type SSHTun struct {
 	timeout            time.Duration
 	debug              bool
 	connState          func(*SSHTun, ConnState)
-	forwardedConnState func(*SSHTun, ForwardedConnState)
+	forwardedConnState func(*SSHTun, ForwardedConnState, int)
 }
 
 // ConnState represents the state of the SSH tunnel. It's returned to an optional function provided to SetConnState.
@@ -254,7 +254,7 @@ func (tun *SSHTun) SetConnState(connStateFun func(*SSHTun, ConnState)) {
 
 // SetForwardedConnState specifies an optional callback function that is called when a forwarded connection changes state.
 // See the ForwardedConnState type and associated constants for details.
-func (tun *SSHTun) SetForwardedConnState(forwardedConnState func(*SSHTun, ForwardedConnState)) {
+func (tun *SSHTun) SetForwardedConnState(forwardedConnState func(*SSHTun, ForwardedConnState, int)) {
 	tun.forwardedConnState = forwardedConnState
 }
 
@@ -289,6 +289,7 @@ func (tun *SSHTun) Start() error {
 
 	// Accept connections
 	go func() {
+		var forwardCounter int
 		for {
 			localConn, err := localList.Accept()
 			if err != nil {
@@ -299,11 +300,11 @@ func (tun *SSHTun) Start() error {
 				log.Printf("Accepted connection from %s", localConn.RemoteAddr().String())
 			}
 			if tun.forwardedConnState != nil {
-				tun.forwardedConnState(tun, StateAccepted)
+				tun.forwardedConnState(tun, StateAccepted, forwardCounter)
 			}
-
 			// Launch the forward
-			go tun.forward(localConn, config)
+			go tun.forward(localConn, config, forwardCounter)
+			forwardCounter++
 		}
 	}()
 
@@ -467,7 +468,7 @@ func (tun *SSHTun) getSSHAuthMethodForSSHAgent() (ssh.AuthMethod, error) {
 	return ssh.PublicKeys(signers...), nil
 }
 
-func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig) {
+func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig, forwardCounter int) {
 	defer localConn.Close()
 
 	local := tun.local.connectionString()
@@ -490,7 +491,7 @@ func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig) {
 			log.Printf("Remote dial to %s failed: %s", remote, err.Error())
 		}
 		if tun.forwardedConnState != nil {
-			tun.forwardedConnState(tun, StateFailed)
+			tun.forwardedConnState(tun, StateFailed, forwardCounter)
 		}
 		return
 	}
@@ -504,7 +505,7 @@ func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig) {
 		log.Printf("SSH tunnel OPEN: %s", connStr)
 	}
 	if tun.forwardedConnState != nil {
-		tun.forwardedConnState(tun, StateOpen)
+		tun.forwardedConnState(tun, StateOpen, forwardCounter)
 	}
 
 	myCtx, myCancel := context.WithCancel(tun.ctx)
@@ -517,7 +518,7 @@ func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig) {
 			}
 		}
 		if tun.forwardedConnState != nil {
-			tun.forwardedConnState(tun, StateRemoteDropped)
+			tun.forwardedConnState(tun, StateRemoteDropped, forwardCounter)
 		}
 		myCancel()
 		return
@@ -548,7 +549,7 @@ func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig) {
 			log.Printf("SSH tunnel CLOSE: %s", connStr)
 		}
 		if tun.forwardedConnState != nil {
-			tun.forwardedConnState(tun, StateClosed)
+			tun.forwardedConnState(tun, StateClosed, forwardCounter)
 		}
 	}
 }
