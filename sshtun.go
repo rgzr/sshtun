@@ -62,21 +62,22 @@ const (
 // SSHTun represents a SSH tunnel
 type SSHTun struct {
 	*sync.Mutex
-	ctx           context.Context
-	cancel        context.CancelFunc
-	errCh         chan error
-	user          string
-	authType      AuthType
-	authKeyFile   string
-	authKeyReader io.Reader
-	authPassword  string
-	server        Endpoint
-	local         Endpoint
-	remote        Endpoint
-	started       bool
-	timeout       time.Duration
-	debug         bool
-	connState     func(*SSHTun, ConnState)
+	ctx                context.Context
+	cancel             context.CancelFunc
+	errCh              chan error
+	user               string
+	authType           AuthType
+	authKeyFile        string
+	authKeyReader      io.Reader
+	authPassword       string
+	server             Endpoint
+	local              Endpoint
+	remote             Endpoint
+	started            bool
+	timeout            time.Duration
+	debug              bool
+	connState          func(*SSHTun, ConnState)
+	forwardedConnState func(*SSHTun, ForwardedConnState)
 }
 
 // ConnState represents the state of the SSH tunnel. It's returned to an optional function provided to SetConnState.
@@ -93,9 +94,14 @@ const (
 	// StateStarted represents a tunnel ready to accept connections.
 	// A call to stop or an error will make the state to transition to StateStopped.
 	StateStarted
-	
+)
+
+// ForwardedConnState represents the state of a forwarded connection. It's returned to an optional function provided to SetForwardedConnState.
+type ForwardedConnState int
+
+const (
 	// StateAccepted represents a (local) listener connection. This state gets triggered when a new incoming connection is made.
-	StateAccepted
+	StateAccepted ForwardedConnState = iota
 
 	// StateOpen represents the last part of a successful remote connection proccess.
 	// This state's purpose is to signal when the connection is established and fully usable.
@@ -120,7 +126,7 @@ const (
 // Calling SetKeyFile will change the authentication to keyfile based with an optional key file.
 // The SSH user and port can be changed with SetUser and SetPort.
 // The local and remote hosts can be changed to something different than localhost with SetLocalHost and SetRemoteHost.
-// The states of the tunnel can be received throgh a callback function with SetConnState.
+// The states of the tunnel can be received through a callback function with SetConnState.
 func New(localPort int, server string, remotePort int) *SSHTun {
 	return &SSHTun{
 		Mutex: &sync.Mutex{},
@@ -246,6 +252,12 @@ func (tun *SSHTun) SetConnState(connStateFun func(*SSHTun, ConnState)) {
 	tun.connState = connStateFun
 }
 
+// SetConnState specifies an optional callback function that is called when a SSH tunnel changes state.
+// See the ConnState type and associated constants for details.
+func (tun *SSHTun) SetForwardedConnState(forwardedConnState func(*SSHTun, ForwardedConnState)) {
+	tun.forwardedConnState = forwardedConnState
+}
+
 // Start starts the SSH tunnel. After this call, all Set* methods will have no effect until Close is called.
 // Note on SSH authentication: in case the tunnel's authType is set to AuthTypeAuto the following will happen:
 // The default key file will be used, if that doesn't succeed it will try to use the SSH agent.
@@ -286,8 +298,8 @@ func (tun *SSHTun) Start() error {
 			if tun.debug {
 				log.Printf("Accepted connection from %s", localConn.RemoteAddr().String())
 			}
-			if tun.connState != nil {
-				tun.connState(tun, StateAccepted)
+			if tun.forwardedConnState != nil {
+				tun.forwardedConnState(tun, StateAccepted)
 			}
 
 			// Launch the forward
@@ -477,8 +489,8 @@ func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig) {
 		if tun.debug {
 			log.Printf("Remote dial to %s failed: %s", remote, err.Error())
 		}
-		if tun.connState != nil {
-			tun.connState(tun, StateFailed)
+		if tun.forwardedConnState != nil {
+			tun.forwardedConnState(tun, StateFailed)
 		}
 		return
 	}
@@ -491,12 +503,12 @@ func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig) {
 	if tun.debug {
 		log.Printf("SSH tunnel OPEN: %s", connStr)
 	}
-	if tun.connState != nil {
-		tun.connState(tun, StateOpen)
+	if tun.forwardedConnState != nil {
+		tun.forwardedConnState(tun, StateOpen)
 	}
 
 	myCtx, myCancel := context.WithCancel(tun.ctx)
-	
+
 	go func() {
 		err := sshConn.Wait()
 		if err != nil {
@@ -504,8 +516,8 @@ func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig) {
 				log.Printf("SSH connection to %s has shut down: %s", server, err.Error())
 			}
 		}
-		if tun.connState != nil {
-			tun.connState(tun, StateRemoteDropped)
+		if tun.forwardedConnState != nil {
+			tun.forwardedConnState(tun, StateRemoteDropped)
 		}
 		myCancel()
 		return
@@ -535,8 +547,8 @@ func (tun *SSHTun) forward(localConn net.Conn, config *ssh.ClientConfig) {
 		if tun.debug {
 			log.Printf("SSH tunnel CLOSE: %s", connStr)
 		}
-		if tun.connState != nil {
-			tun.connState(tun, StateClosed)
+		if tun.forwardedConnState != nil {
+			tun.forwardedConnState(tun, StateClosed)
 		}
 	}
 }

@@ -26,6 +26,22 @@ func main() {
 		}
 	})
 
+	// We set a callback to know the state of the forwarded connections
+	sshTun.SetForwardedConnState(func(tun *sshtun.SSHTun, state sshtun.ForwardedConnState) {
+		switch state {
+		case sshtun.StateAccepted:
+			log.Printf("Forward STATE is Accepted")
+		case sshtun.StateOpen:
+			log.Printf("Forward STATE is Open")
+		case sshtun.StateClosed:
+			log.Printf("Forward STATE is Closed")
+		case sshtun.StateFailed:
+			log.Printf("Forward STATE is Failed")
+		case sshtun.StateRemoteDropped:
+			log.Printf("Forward STATE is Dropped")
+		}
+	})
+
 	// We start the tunnel (and restart it every time it is stopped)
 	go func() {
 		for {
