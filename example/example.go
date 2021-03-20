@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	// We want to connect to port 8080 on our machine to acces port 80 on my.super.host.com
+	// We want to connect to port 8080 on our machine to access port 80 on my.super.host.com
 	sshTun := sshtun.New(8080, "my.super.host.com", 80)
 
 	// We enable debug messages to see what happens
@@ -23,6 +23,22 @@ func main() {
 			log.Printf("STATE is Started")
 		case sshtun.StateStopped:
 			log.Printf("STATE is Stopped")
+		}
+	})
+
+	// We set a callback to know the state of the forwarded connections
+	sshTun.SetForwardedConnState(func(tun *sshtun.SSHTun, state sshtun.ForwardedConnState, forwardCounter int) {
+		switch state {
+		case sshtun.StateAccepted:
+			log.Printf("Forward %d STATE is Accepted", forwardCounter)
+		case sshtun.StateOpen:
+			log.Printf("Forward %d STATE is Open", forwardCounter)
+		case sshtun.StateClosed:
+			log.Printf("Forward %d STATE is Closed", forwardCounter)
+		case sshtun.StateFailed:
+			log.Printf("Forward %d STATE is Failed", forwardCounter)
+		case sshtun.StateRemoteDropped:
+			log.Printf("Forward %d STATE is Dropped", forwardCounter)
 		}
 	})
 
