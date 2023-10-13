@@ -56,7 +56,7 @@ func (tun *SSHTun) forward(localConn net.Conn) {
 
 	tun.tunneledState(&TunneledConnState{
 		From:  from,
-		Info:  fmt.Sprintf("connection stablished: %s", connStr),
+		Info:  fmt.Sprintf("connection established: %s", connStr),
 		Ready: true,
 	})
 
@@ -69,8 +69,7 @@ func (tun *SSHTun) forward(localConn net.Conn) {
 		if err != nil {
 			return fmt.Errorf("failed copying bytes from remote to local: %w", err)
 		}
-
-		return nil
+		return remoteConn.Close()
 	})
 
 	errGroup.Go(func() error {
@@ -79,16 +78,12 @@ func (tun *SSHTun) forward(localConn net.Conn) {
 		if err != nil {
 			return fmt.Errorf("failed copying bytes from local to remote: %w", err)
 		}
-
-		return nil
+		return localConn.Close()
 	})
 
-	<-connCtx.Done()
-
-	localConn.Close()
-	remoteConn.Close()
-
 	err = errGroup.Wait()
+
+	<-connCtx.Done()
 
 	select {
 	case <-tun.ctx.Done():
