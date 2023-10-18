@@ -19,6 +19,8 @@ type TunneledConnState struct {
 	Error error
 	// Ready indicates if the connection is established.
 	Ready bool
+	// Closed indicates if the coonnection is closed.
+	Closed bool
 }
 
 func (s *TunneledConnState) String() string {
@@ -55,9 +57,10 @@ func (tun *SSHTun) forward(localConn net.Conn) {
 		tun.server.String(), tun.remote.Type(), tun.remote.String())
 
 	tun.tunneledState(&TunneledConnState{
-		From:  from,
-		Info:  fmt.Sprintf("connection established: %s", connStr),
-		Ready: true,
+		From:   from,
+		Info:   fmt.Sprintf("connection established: %s", connStr),
+		Ready:  true,
+		Closed: false,
 	})
 
 	connCtx, connCancel := context.WithCancel(tun.ctx)
@@ -90,8 +93,9 @@ func (tun *SSHTun) forward(localConn net.Conn) {
 	default:
 		if err != nil {
 			tun.tunneledState(&TunneledConnState{
-				From:  from,
-				Error: err,
+				From:   from,
+				Error:  err,
+				Closed: true,
 			})
 		}
 	}
