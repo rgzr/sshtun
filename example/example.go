@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/rgzr/sshtun"
+	"github.com/stankovic-marko/sshtun"
 )
 
 func main() {

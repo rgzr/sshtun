@@ -1,4 +1,4 @@
-module github.com/rgzr/sshtun
+module github.com/stankovic-marko/sshtun
 
 go 1.19
 
