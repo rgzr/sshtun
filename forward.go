@@ -85,6 +85,10 @@ func (tun *SSHTun) forward(localConn net.Conn) {
 	})
 
 	err = errGroup.Wait()
+	tun.tunneledState(&TunneledConnState{
+		Ready:  false,
+		Closed: true,
+	})
 
 	<-connCtx.Done()
 
@@ -93,9 +97,8 @@ func (tun *SSHTun) forward(localConn net.Conn) {
 	default:
 		if err != nil {
 			tun.tunneledState(&TunneledConnState{
-				From:   from,
-				Error:  err,
-				Closed: true,
+				From:  from,
+				Error: err,
 			})
 		}
 	}
