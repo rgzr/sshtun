@@ -93,9 +93,8 @@ func (tun *SSHTun) forward(localConn net.Conn) {
 	default:
 		if err != nil {
 			tun.tunneledState(&TunneledConnState{
-				From:   from,
-				Error:  err,
-				Closed: true,
+				From:  from,
+				Error: err,
 			})
 		}
 	}
