@@ -8,6 +8,7 @@ sshtun is a Go package that provides a SSH tunnel with port forwarding supportin
 * Password authentication
 * Un/encrypted key file authentication
 * `ssh-agent` based authentication
+* Both local and remote port forwarding
 
 By default it reads the default linux ssh private key locations and fallbacks to using `ssh-agent`, but a specific authentication method can be set.
 
@@ -33,7 +34,7 @@ import (
 
 func main() {
 	// We want to connect to port 8080 on our machine to acces port 80 on my.super.host.com
-	sshTun := sshtun.New(8080, "my.super.host.com", 80)
+	sshTun := sshtun.New(8080, "my.super.host.com", 80, sshtun.Local)
 
 	// We print each tunneled state to see the connections status
 	sshTun.SetTunneledConnState(func(tun *sshtun.SSHTun, state *sshtun.TunneledConnState) {

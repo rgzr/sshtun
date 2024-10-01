@@ -10,7 +10,7 @@ import (
 
 func main() {
 	// We want to connect to port 8080 on our machine to acces port 80 on my.super.host.com
-	sshTun := sshtun.New(8080, "my.super.host.com", 80)
+	sshTun := sshtun.New(8080, "my.super.host.com", 80, sshtun.Local)
 
 	// We print each tunneled state to see the connections status
 	sshTun.SetTunneledConnState(func(tun *sshtun.SSHTun, state *sshtun.TunneledConnState) {

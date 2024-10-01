@@ -27,6 +27,7 @@ type SSHTun struct {
 	server            *Endpoint
 	local             *Endpoint
 	remote            *Endpoint
+	forwardType				ForwardType
 	timeout           time.Duration
 	connState         func(*SSHTun, ConnState)
 	tunneledConnState func(*SSHTun, *TunneledConnState)
@@ -34,6 +35,16 @@ type SSHTun struct {
 	sshClient         *ssh.Client
 	sshConfig         *ssh.ClientConfig
 }
+
+// ForwardType is the type of port forwarding.
+// Local: forward from localhost.
+// Remote: forward from remote - reverse port forward.
+type ForwardType int
+
+const (
+	Local ForwardType = iota 
+	Remote
+)
 
 // ConnState represents the state of the SSH tunnel. It's returned to an optional function provided to SetConnState.
 type ConnState int
@@ -60,10 +71,11 @@ const (
 // The local and remote hosts can be changed to something different than localhost with SetLocalEndpoint and SetRemoteEndpoint.
 // The states of the tunnel can be received throgh a callback function with SetConnState.
 // The states of the tunneled connections can be received through a callback function with SetTunneledConnState.
-func New(localPort int, server string, remotePort int) *SSHTun {
+func New(localPort int, server string, remotePort int, forwardType ForwardType) *SSHTun {
 	sshTun := defaultSSHTun(server)
 	sshTun.local = NewTCPEndpoint("localhost", localPort)
 	sshTun.remote = NewTCPEndpoint("localhost", remotePort)
+	sshTun.forwardType = forwardType
 	return sshTun
 }
 
@@ -200,14 +212,28 @@ func (tun *SSHTun) Start(ctx context.Context) error {
 	tun.sshConfig = config
 
 	listenConfig := net.ListenConfig{}
-	localListener, err := listenConfig.Listen(tun.ctx, tun.local.Type(), tun.local.String())
-	if err != nil {
-		return tun.stop(fmt.Errorf("local listen %s on %s failed: %w", tun.local.Type(), tun.local.String(), err))
+	var listener net.Listener
+
+	if tun.forwardType == Local {
+		listener, err = listenConfig.Listen(tun.ctx, tun.local.Type(), tun.local.String())
+		if err != nil {
+			return tun.stop(fmt.Errorf("local listen %s on %s failed: %w", tun.local.Type(), tun.local.String(), err))
+		}
+	}
+	if tun.forwardType == Remote {
+		sshClient, err := ssh.Dial(tun.server.Type(), tun.server.String(), tun.sshConfig)
+		if err != nil {
+			return tun.stop(fmt.Errorf("could not establish ssh client with %s", tun.server.String()))
+		}
+		listener, err = sshClient.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", tun.remote.port))
+		if err != nil {
+			return tun.stop(fmt.Errorf("remote listen %s on %s failed: %w", tun.remote.Type(), tun.remote.String(), err))
+		}	
 	}
 
 	errChan := make(chan error)
 	go func() {
-		errChan <- tun.listen(localListener)
+		errChan <- tun.listen(listener)
 	}()
 
 	if tun.connState != nil {
@@ -256,25 +282,23 @@ func (tun *SSHTun) stop(err error) error {
 	return err
 }
 
-func (tun *SSHTun) listen(localListener net.Listener) error {
+func (tun *SSHTun) listen(listener net.Listener) error {
 	errGroup, groupCtx := errgroup.WithContext(tun.ctx)
-
 	errGroup.Go(func() error {
 		for {
-			localConn, err := localListener.Accept()
+			conn, err := listener.Accept()
 			if err != nil {
 				return fmt.Errorf("local accept %s on %s failed: %w", tun.local.Type(), tun.local.String(), err)
 			}
-
 			errGroup.Go(func() error {
-				return tun.handle(localConn)
+				return tun.handle(conn)
 			})
 		}
 	})
 
 	<-groupCtx.Done()
 
-	localListener.Close()
+	listener.Close()
 
 	err := errGroup.Wait()
 
@@ -288,9 +312,11 @@ func (tun *SSHTun) listen(localListener net.Listener) error {
 }
 
 func (tun *SSHTun) handle(localConn net.Conn) error {
-	err := tun.addConn()
-	if err != nil {
-		return err
+	if tun.forwardType == Local{
+		err := tun.addConn()
+		if err != nil {
+			return err
+		}
 	}
 
 	tun.forward(localConn)
