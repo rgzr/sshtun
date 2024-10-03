@@ -247,7 +247,7 @@ func (tun *SSHTun) Start(ctx context.Context) error {
 	if tun.forwardType == Remote {
 		sshClient, err := ssh.Dial(tun.server.Type(), tun.server.String(), tun.sshConfig)
 		if err != nil {
-			return tun.stop(fmt.Errorf("could not establish ssh client with %s", tun.server.String()))
+			return tun.stop(fmt.Errorf("ssh dial %s to %s failed: %w", tun.server.Type(), tun.server.String(), err)
 		}
 		listener, err = sshClient.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", tun.remote.port))
 		if err != nil {
