@@ -8,6 +8,7 @@ sshtun is a Go package that provides a SSH tunnel with port forwarding supportin
 * Password authentication
 * Un/encrypted key file authentication
 * `ssh-agent` based authentication
+* Both local and remote port forwarding
 
 By default it reads the default linux ssh private key locations and fallbacks to using `ssh-agent`, but a specific authentication method can be set.
 

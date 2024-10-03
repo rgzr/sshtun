@@ -19,6 +19,8 @@ type TunneledConnState struct {
 	Error error
 	// Ready indicates if the connection is established.
 	Ready bool
+	// Closed indicates if the connection is closed.
+	Closed bool
 }
 
 func (s *TunneledConnState) String() string {
@@ -32,32 +34,57 @@ func (s *TunneledConnState) String() string {
 	return out
 }
 
-func (tun *SSHTun) forward(localConn net.Conn) {
-	from := localConn.RemoteAddr().String()
+func (tun *SSHTun) forward(fromConn net.Conn) {
+	from := fromConn.RemoteAddr().String()
 
-	tun.tunneledState(&TunneledConnState{
-		From: from,
-		Info: fmt.Sprintf("accepted %s connection", tun.local.Type()),
-	})
-
-	remoteConn, err := tun.sshClient.Dial(tun.remote.Type(), tun.remote.String())
-	if err != nil {
+	if tun.forwardType == Local {
 		tun.tunneledState(&TunneledConnState{
-			From:  from,
-			Error: fmt.Errorf("remote dial %s to %s failed: %w", tun.remote.Type(), tun.remote.String(), err),
+			From: from,
+			Info: fmt.Sprintf("accepted %s connection", tun.local.Type()),
 		})
+	} else if tun.forwardType == Remote {
+    tun.tunneledState(&TunneledConnState{
+      From: from,
+      Info: fmt.Sprintf("accepted %s connection", tun.remote.Type()),
+    })
+  }
 
-		localConn.Close()
-		return
+	var toConn net.Conn
+	var err error
+	
+	if tun.forwardType == Local {
+		toConn, err = tun.sshClient.Dial(tun.remote.Type(), tun.remote.String())
+		if err != nil {
+			tun.tunneledState(&TunneledConnState{
+				From:  from,
+				Error: fmt.Errorf("remote dial %s to %s failed: %w", tun.remote.Type(), tun.remote.String(), err),
+			})
+
+			fromConn.Close()
+			return
+		}
+	}
+	if tun.forwardType == Remote {
+		toConn, err = net.Dial(tun.local.Type(), tun.local.String())
+		if err != nil {
+			tun.tunneledState(&TunneledConnState{
+				From:  from,
+				Error: fmt.Errorf("local dial %s to %s failed: %w", tun.local.Type(), tun.local.String(), err),
+			})
+
+			fromConn.Close()
+			return
+		}
 	}
 
 	connStr := fmt.Sprintf("%s -(%s)> %s -(ssh)> %s -(%s)> %s", from, tun.local.Type(), tun.local.String(),
 		tun.server.String(), tun.remote.Type(), tun.remote.String())
 
 	tun.tunneledState(&TunneledConnState{
-		From:  from,
-		Info:  fmt.Sprintf("connection stablished: %s", connStr),
-		Ready: true,
+		From:   from,
+		Info:   fmt.Sprintf("connection established: %s", connStr),
+		Ready:  true,
+		Closed: false,
 	})
 
 	connCtx, connCancel := context.WithCancel(tun.ctx)
@@ -65,30 +92,33 @@ func (tun *SSHTun) forward(localConn net.Conn) {
 
 	errGroup.Go(func() error {
 		defer connCancel()
-		_, err = io.Copy(remoteConn, localConn)
+		_, err = io.Copy(toConn, fromConn)
 		if err != nil {
-			return fmt.Errorf("failed copying bytes from remote to local: %w", err)
+			if tun.forwardType == Local {
+				return fmt.Errorf("failed copying bytes from remote to local: %w", err)
+			} else if tun.forwardType == Remote {
+				return fmt.Errorf("failed copying bytes from local to remote: %w", err)
+			}
 		}
-
-		return nil
+		return toConn.Close()
 	})
 
 	errGroup.Go(func() error {
 		defer connCancel()
-		_, err = io.Copy(localConn, remoteConn)
+		_, err = io.Copy(fromConn, toConn)
 		if err != nil {
-			return fmt.Errorf("failed copying bytes from local to remote: %w", err)
+			if tun.forwardType == Local {
+				return fmt.Errorf("failed copying bytes from local to remote: %w", err)
+			} else if tun.forwardType == Remote {
+				return fmt.Errorf("failed copying bytes from remote to local: %w", err)
+			}
 		}
-
-		return nil
+		return fromConn.Close()
 	})
 
-	<-connCtx.Done()
-
-	localConn.Close()
-	remoteConn.Close()
-
 	err = errGroup.Wait()
+
+	<-connCtx.Done()
 
 	select {
 	case <-tun.ctx.Done():
@@ -97,13 +127,16 @@ func (tun *SSHTun) forward(localConn net.Conn) {
 			tun.tunneledState(&TunneledConnState{
 				From:  from,
 				Error: err,
+				Closed: true,
 			})
 		}
 	}
 
 	tun.tunneledState(&TunneledConnState{
-		From: from,
-		Info: fmt.Sprintf("connection closed: %s", connStr),
+		From:   from,
+		Info:   fmt.Sprintf("connection closed: %s", connStr),
+		Ready:  false,
+		Closed: true,
 	})
 }
 
