@@ -37,48 +37,33 @@ func (s *TunneledConnState) String() string {
 func (tun *SSHTun) forward(fromConn net.Conn) {
 	from := fromConn.RemoteAddr().String()
 
-	if tun.forwardType == Local {
-		tun.tunneledState(&TunneledConnState{
-			From: from,
-			Info: fmt.Sprintf("accepted %s connection", tun.local.Type()),
-		})
-	} else if tun.forwardType == Remote {
-    tun.tunneledState(&TunneledConnState{
-      From: from,
-      Info: fmt.Sprintf("accepted %s connection", tun.remote.Type()),
-    })
-  }
+	tun.tunneledState(&TunneledConnState{
+		From: from,
+		Info: fmt.Sprintf("accepted %s connection", tun.fromEndpoint().Type()),
+	})
 
 	var toConn net.Conn
 	var err error
-	
-	if tun.forwardType == Local {
-		toConn, err = tun.sshClient.Dial(tun.remote.Type(), tun.remote.String())
-		if err != nil {
-			tun.tunneledState(&TunneledConnState{
-				From:  from,
-				Error: fmt.Errorf("remote dial %s to %s failed: %w", tun.remote.Type(), tun.remote.String(), err),
-			})
 
-			fromConn.Close()
-			return
-		}
-	}
+	dialFunc := tun.sshClient.Dial
 	if tun.forwardType == Remote {
-		toConn, err = net.Dial(tun.local.Type(), tun.local.String())
-		if err != nil {
-			tun.tunneledState(&TunneledConnState{
-				From:  from,
-				Error: fmt.Errorf("local dial %s to %s failed: %w", tun.local.Type(), tun.local.String(), err),
-			})
-
-			fromConn.Close()
-			return
-		}
+		dialFunc = net.Dial
 	}
 
-	connStr := fmt.Sprintf("%s -(%s)> %s -(ssh)> %s -(%s)> %s", from, tun.local.Type(), tun.local.String(),
-		tun.server.String(), tun.remote.Type(), tun.remote.String())
+	toConn, err = dialFunc(tun.toEndpoint().Type(), tun.toEndpoint().String())
+	if err != nil {
+		tun.tunneledState(&TunneledConnState{
+			From: from,
+			Error: fmt.Errorf("%s dial %s to %s failed: %w", tun.forwardToName(),
+				tun.toEndpoint().Type(), tun.toEndpoint().String(), err),
+		})
+
+		fromConn.Close()
+		return
+	}
+
+	connStr := fmt.Sprintf("%s -(%s)> %s <(ssh)> %s -(%s)> %s", from, tun.fromEndpoint().Type(),
+		tun.fromEndpoint().String(), tun.server.String(), tun.toEndpoint().Type(), tun.toEndpoint().String())
 
 	tun.tunneledState(&TunneledConnState{
 		From:   from,
@@ -94,39 +79,34 @@ func (tun *SSHTun) forward(fromConn net.Conn) {
 		defer connCancel()
 		_, err = io.Copy(toConn, fromConn)
 		if err != nil {
-			if tun.forwardType == Local {
-				return fmt.Errorf("failed copying bytes from remote to local: %w", err)
-			} else if tun.forwardType == Remote {
-				return fmt.Errorf("failed copying bytes from local to remote: %w", err)
-			}
+			return fmt.Errorf("failed copying bytes from %s to %s: %w", tun.forwardToName(), tun.forwardFromName(), err)
 		}
-		return toConn.Close()
+		return nil
 	})
 
 	errGroup.Go(func() error {
 		defer connCancel()
 		_, err = io.Copy(fromConn, toConn)
 		if err != nil {
-			if tun.forwardType == Local {
-				return fmt.Errorf("failed copying bytes from local to remote: %w", err)
-			} else if tun.forwardType == Remote {
-				return fmt.Errorf("failed copying bytes from remote to local: %w", err)
-			}
+			return fmt.Errorf("failed copying bytes from %s to %s: %w", tun.forwardFromName(), tun.forwardToName(), err)
 		}
-		return fromConn.Close()
+		return nil
 	})
 
-	err = errGroup.Wait()
-
 	<-connCtx.Done()
+
+	fromConn.Close()
+	toConn.Close()
+
+	err = errGroup.Wait()
 
 	select {
 	case <-tun.ctx.Done():
 	default:
 		if err != nil {
 			tun.tunneledState(&TunneledConnState{
-				From:  from,
-				Error: err,
+				From:   from,
+				Error:  err,
 				Closed: true,
 			})
 		}
@@ -135,7 +115,6 @@ func (tun *SSHTun) forward(fromConn net.Conn) {
 	tun.tunneledState(&TunneledConnState{
 		From:   from,
 		Info:   fmt.Sprintf("connection closed: %s", connStr),
-		Ready:  false,
 		Closed: true,
 	})
 }

@@ -30,18 +30,32 @@ type testServers struct {
 	pingPongConnections atomic.Int32
 }
 
-func newTestServers(localPort, sshPort, remotePort int) *testServers {
+func newTestServers(localPort, sshPort, remotePort int, forwardType ForwardType) *testServers {
 	sshServer := &ssh.Server{
-		LocalPortForwardingCallback: ssh.LocalPortForwardingCallback(func(ctx ssh.Context, dhost string, dport uint32) bool {
-			return true
-		}),
 		Addr: fmt.Sprintf(":%d", sshPort),
-		ChannelHandlers: map[string]ssh.ChannelHandler{
+	}
+
+	if forwardType == Local {
+		sshServer.LocalPortForwardingCallback = ssh.LocalPortForwardingCallback(
+			func(ctx ssh.Context, dhost string, dport uint32) bool {
+				return true
+			})
+		sshServer.ChannelHandlers = map[string]ssh.ChannelHandler{
 			"direct-tcpip": ssh.DirectTCPIPHandler,
-		},
+		}
+	} else if forwardType == Remote {
+		sshServer.ReversePortForwardingCallback = ssh.ReversePortForwardingCallback(
+			func(ctx ssh.Context, bindHost string, bindPort uint32) bool {
+				return true
+			})
+		forwarder := &ssh.ForwardedTCPHandler{}
+		sshServer.RequestHandlers = map[string]ssh.RequestHandler{
+			"tcpip-forward": forwarder.HandleSSHRequest,
+		}
 	}
 
 	sshTun := New(localPort, "localhost", remotePort)
+	sshTun.SetForwardType(forwardType)
 	sshTun.SetPort(sshPort)
 
 	return &testServers{
@@ -94,7 +108,7 @@ func (s *testServers) servePingPong(ctx context.Context) error {
 	errCh := make(chan error)
 
 	listener, err := net.ListenTCP("tcp", &net.TCPAddr{
-		Port: s.remotePort,
+		Port: s.sshTun.toEndpoint().port,
 	})
 	if err != nil {
 		return err
@@ -179,7 +193,7 @@ type pingPongClient struct {
 
 func (s *testServers) connectPingPong() (*pingPongClient, error) {
 	conn, err := net.DialTCP("tcp", nil, &net.TCPAddr{
-		Port: s.localPort,
+		Port: s.sshTun.fromEndpoint().port,
 	})
 
 	if err != nil {
@@ -225,7 +239,7 @@ func (c *pingPongClient) close() error {
 	return c.conn.Close()
 }
 
-func runTestServers(t *testing.T) (*testServers, chan error, context.CancelFunc) {
+func runTestServers(t *testing.T, forwardType ForwardType) (*testServers, chan error, context.CancelFunc) {
 	t.Helper()
 
 	sshPort, err := freeport.GetFreePort()
@@ -237,7 +251,7 @@ func runTestServers(t *testing.T) (*testServers, chan error, context.CancelFunc)
 	remotePort, err := freeport.GetFreePort()
 	require.NoError(t, err)
 
-	testServers := newTestServers(localPort, sshPort, remotePort)
+	testServers := newTestServers(localPort, sshPort, remotePort, forwardType)
 
 	testServers.sshTun.SetConnState(func(tun *SSHTun, connState ConnState) {
 		switch connState {
@@ -288,7 +302,7 @@ func pingPongConnect(t *testing.T, testServers *testServers) *pingPongClient {
 }
 
 func TestOneConnection(t *testing.T) {
-	testServers, errCh, cancel := runTestServers(t)
+	testServers, errCh, cancel := runTestServers(t, Local)
 
 	client := pingPongConnect(t, testServers)
 
@@ -307,7 +321,7 @@ func TestOneConnection(t *testing.T) {
 }
 
 func TestMultipleConnections(t *testing.T) {
-	testServers, errCh, cancel := runTestServers(t)
+	testServers, errCh, cancel := runTestServers(t, Local)
 
 	client1 := pingPongConnect(t, testServers)
 
@@ -352,19 +366,113 @@ func checkTunConnections(t *testing.T, testServers *testServers, connections int
 		return fmt.Errorf("there are %d active connections instead of %d expected", testServers.sshTun.active, connections)
 	}
 
-	if connections == 0 && testServers.sshTun.sshClient != nil {
-		return fmt.Errorf("ssh client should be nil")
-	}
+	if testServers.sshTun.forwardType == Local {
+		if connections == 0 && testServers.sshTun.sshClient != nil {
+			return fmt.Errorf("ssh client should be nil")
+		}
 
-	if connections != 0 && testServers.sshTun.sshClient == nil {
-		return fmt.Errorf("ssh client should not be nil")
+		if connections != 0 && testServers.sshTun.sshClient == nil {
+			return fmt.Errorf("ssh client should not be nil")
+		}
 	}
 
 	return nil
 }
 
 func TestReconnectTunnel(t *testing.T) {
-	testServers, errCh, cancel := runTestServers(t)
+	testServers, errCh, cancel := runTestServers(t, Local)
+
+	require.NoError(t, checkTunConnections(t, testServers, 0))
+
+	client := pingPongConnect(t, testServers)
+
+	err := client.ping()
+	require.NoError(t, err)
+
+	require.NoError(t, checkTunConnections(t, testServers, 1))
+
+	err = client.close()
+	require.NoError(t, err)
+
+	err = retry.Do(func() error {
+		return checkTunConnections(t, testServers, 0)
+	}, retry.Attempts(5), retry.Delay(500*time.Millisecond))
+
+	require.NoError(t, err)
+
+	client = pingPongConnect(t, testServers)
+
+	err = client.ping()
+	require.NoError(t, err)
+
+	require.NoError(t, checkTunConnections(t, testServers, 1))
+
+	err = client.close()
+	require.NoError(t, err)
+
+	cancel()
+	err = <-errCh
+
+	require.NoError(t, err)
+}
+
+func TestOneRemoteConnection(t *testing.T) {
+	testServers, errCh, cancel := runTestServers(t, Remote)
+
+	client := pingPongConnect(t, testServers)
+
+	err := client.ping()
+	require.NoError(t, err)
+
+	require.Equal(t, 1, client.pings)
+
+	err = client.close()
+	require.NoError(t, err)
+
+	cancel()
+	err = <-errCh
+
+	require.NoError(t, err)
+}
+
+func TestMultipleRemoteConnections(t *testing.T) {
+	testServers, errCh, cancel := runTestServers(t, Remote)
+
+	client1 := pingPongConnect(t, testServers)
+
+	client2 := pingPongConnect(t, testServers)
+
+	err := client1.ping()
+	require.NoError(t, err)
+
+	err = client2.ping()
+	require.NoError(t, err)
+
+	err = client1.ping()
+	require.NoError(t, err)
+
+	require.Equal(t, 2, client1.pings)
+	require.Equal(t, 1, client2.pings)
+
+	err = client1.close()
+	require.NoError(t, err)
+
+	err = client2.ping()
+	require.NoError(t, err)
+
+	require.Equal(t, 2, client2.pings)
+
+	err = client2.close()
+	require.NoError(t, err)
+
+	cancel()
+	err = <-errCh
+
+	require.NoError(t, err)
+}
+
+func TestReconnectRemoteTunnel(t *testing.T) {
+	testServers, errCh, cancel := runTestServers(t, Remote)
 
 	require.NoError(t, checkTunConnections(t, testServers, 0))
 

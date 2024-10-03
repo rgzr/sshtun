@@ -27,7 +27,7 @@ type SSHTun struct {
 	server            *Endpoint
 	local             *Endpoint
 	remote            *Endpoint
-	forwardType				ForwardType
+	forwardType       ForwardType
 	timeout           time.Duration
 	connState         func(*SSHTun, ConnState)
 	tunneledConnState func(*SSHTun, *TunneledConnState)
@@ -42,7 +42,7 @@ type SSHTun struct {
 type ForwardType int
 
 const (
-	Local ForwardType = iota 
+	Local ForwardType = iota
 	Remote
 )
 
@@ -81,11 +81,9 @@ func New(localPort int, server string, remotePort int) *SSHTun {
 
 // NewRemote does the same as New but for a remote port forward.
 func NewRemote(localPort int, server string, remotePort int) *SSHTun {
-  sshTun := defaultSSHTun(server)
-  sshTun.local = NewTCPEndpoint("localhost", localPort)
-  sshTun.remote = NewTCPEndpoint("localhost", remotePort)
-  sshTun.forwardType = Remote
-  return sshTun
+	sshTun := New(localPort, server, remotePort)
+	sshTun.forwardType = Remote
+	return sshTun
 }
 
 // NewUnix does the same as New but using unix sockets.
@@ -98,20 +96,18 @@ func NewUnix(localUnixSocket string, server string, remoteUnixSocket string) *SS
 
 // NewUnixRemote does the same as NewRemote but using unix sockets.
 func NewUnixRemote(localUnixSocket string, server string, remoteUnixSocket string) *SSHTun {
-	sshTun := defaultSSHTun(server)
-	sshTun.local = NewUnixEndpoint(localUnixSocket)
-	sshTun.remote = NewUnixEndpoint(remoteUnixSocket)
+	sshTun := NewUnix(localUnixSocket, server, remoteUnixSocket)
 	sshTun.forwardType = Remote
 	return sshTun
 }
 
 func defaultSSHTun(server string) *SSHTun {
 	return &SSHTun{
-		mutex:    &sync.Mutex{},
-		server:   NewTCPEndpoint(server, 22),
-		user:     "root",
-		authType: AuthTypeAuto,
-		timeout:  time.Second * 15,
+		mutex:       &sync.Mutex{},
+		server:      NewTCPEndpoint(server, 22),
+		user:        "root",
+		authType:    AuthTypeAuto,
+		timeout:     time.Second * 15,
 		forwardType: Local,
 	}
 }
@@ -243,8 +239,7 @@ func (tun *SSHTun) Start(ctx context.Context) error {
 		if err != nil {
 			return tun.stop(fmt.Errorf("local listen %s on %s failed: %w", tun.local.Type(), tun.local.String(), err))
 		}
-	}
-	if tun.forwardType == Remote {
+	} else if tun.forwardType == Remote {
 		sshClient, err := ssh.Dial(tun.server.Type(), tun.server.String(), tun.sshConfig)
 		if err != nil {
 			return tun.stop(fmt.Errorf("ssh dial %s to %s failed: %w", tun.server.Type(), tun.server.String(), err))
@@ -252,7 +247,7 @@ func (tun *SSHTun) Start(ctx context.Context) error {
 		listener, err = sshClient.Listen(tun.remote.Type(), tun.remote.String())
 		if err != nil {
 			return tun.stop(fmt.Errorf("remote listen %s on %s failed: %w", tun.remote.Type(), tun.remote.String(), err))
-		}	
+		}
 	}
 
 	errChan := make(chan error)
@@ -306,17 +301,47 @@ func (tun *SSHTun) stop(err error) error {
 	return err
 }
 
+func (tun *SSHTun) fromEndpoint() *Endpoint {
+	if tun.forwardType == Remote {
+		return tun.remote
+	}
+
+	return tun.local
+}
+
+func (tun *SSHTun) toEndpoint() *Endpoint {
+	if tun.forwardType == Remote {
+		return tun.local
+	}
+
+	return tun.remote
+}
+
+func (tun *SSHTun) forwardFromName() string {
+	if tun.forwardType == Remote {
+		return "remote"
+	}
+
+	return "local"
+}
+
+func (tun *SSHTun) forwardToName() string {
+	if tun.forwardType == Remote {
+		return "local"
+	}
+
+	return "remote"
+}
+
 func (tun *SSHTun) listen(listener net.Listener) error {
+
 	errGroup, groupCtx := errgroup.WithContext(tun.ctx)
 	errGroup.Go(func() error {
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
-				if tun.forwardType == Local {
-					return fmt.Errorf("local accept %s on %s failed: %w", tun.local.Type(), tun.local.String(), err)
-				} else if tun.forwardType == Remote {
-					return fmt.Errorf("remote accept %s on %s failed: %w", tun.remote.Type(), tun.remote.String(), err)
-				}
+				return fmt.Errorf("%s accept %s on %s failed: %w", tun.forwardFromName(),
+					tun.fromEndpoint().Type(), tun.fromEndpoint().String(), err)
 			}
 			errGroup.Go(func() error {
 				return tun.handle(conn)
