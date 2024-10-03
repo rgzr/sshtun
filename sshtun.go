@@ -339,13 +339,13 @@ func (tun *SSHTun) listen(listener net.Listener) error {
 	return nil
 }
 
-func (tun *SSHTun) handle(localConn net.Conn) error {
+func (tun *SSHTun) handle(conn net.Conn) error {
 	err := tun.addConn()
 	if err != nil {
 		return err
 	}
 
-	tun.forward(localConn)
+	tun.forward(conn)
 	tun.removeConn()
 
 	return nil
