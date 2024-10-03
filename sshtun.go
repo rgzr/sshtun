@@ -247,7 +247,7 @@ func (tun *SSHTun) Start(ctx context.Context) error {
 	if tun.forwardType == Remote {
 		sshClient, err := ssh.Dial(tun.server.Type(), tun.server.String(), tun.sshConfig)
 		if err != nil {
-			return tun.stop(fmt.Errorf("ssh dial %s to %s failed: %w", tun.server.Type(), tun.server.String(), err)
+			return tun.stop(fmt.Errorf("ssh dial %s to %s failed: %w", tun.server.Type(), tun.server.String(), err))
 		}
 		listener, err = sshClient.Listen(tun.remote.Type(), tun.remote.String())
 		if err != nil {
@@ -312,7 +312,11 @@ func (tun *SSHTun) listen(listener net.Listener) error {
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
-				return fmt.Errorf("local accept %s on %s failed: %w", tun.local.Type(), tun.local.String(), err)
+				if tun.forwardType == Local {
+					return fmt.Errorf("local accept %s on %s failed: %w", tun.local.Type(), tun.local.String(), err)
+				} else if tun.forwardType == Remote {
+					return fmt.Errorf("remote accept %s on %s failed: %w", tun.remote.Type(), tun.remote.String(), err)
+				}
 			}
 			errGroup.Go(func() error {
 				return tun.handle(conn)
@@ -336,11 +340,9 @@ func (tun *SSHTun) listen(listener net.Listener) error {
 }
 
 func (tun *SSHTun) handle(localConn net.Conn) error {
-	if tun.forwardType == Local{
-		err := tun.addConn()
-		if err != nil {
-			return err
-		}
+	err := tun.addConn()
+	if err != nil {
+		return err
 	}
 
 	tun.forward(localConn)
@@ -353,7 +355,7 @@ func (tun *SSHTun) addConn() error {
 	tun.mutex.Lock()
 	defer tun.mutex.Unlock()
 
-	if tun.active == 0 {
+	if tun.forwardType == Local && tun.active == 0 {
 		sshClient, err := ssh.Dial(tun.server.Type(), tun.server.String(), tun.sshConfig)
 		if err != nil {
 			return fmt.Errorf("ssh dial %s to %s failed: %w", tun.server.Type(), tun.server.String(), err)
@@ -372,7 +374,7 @@ func (tun *SSHTun) removeConn() {
 
 	tun.active -= 1
 
-	if tun.active == 0 {
+	if tun.forwardType == Local && tun.active == 0 {
 		tun.sshClient.Close()
 		tun.sshClient = nil
 	}

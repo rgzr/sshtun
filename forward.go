@@ -37,10 +37,17 @@ func (s *TunneledConnState) String() string {
 func (tun *SSHTun) forward(fromConn net.Conn) {
 	from := fromConn.RemoteAddr().String()
 
-	tun.tunneledState(&TunneledConnState{
-		From: from,
-		Info: fmt.Sprintf("accepted %s connection", tun.local.Type()),
-	})
+	if tun.forwardType == Local {
+		tun.tunneledState(&TunneledConnState{
+			From: from,
+			Info: fmt.Sprintf("accepted %s connection", tun.local.Type()),
+		})
+	} else if tun.forwardType == Remote {
+    tun.tunneledState(&TunneledConnState{
+      From: from,
+      Info: fmt.Sprintf("accepted %s connection", tun.remote.Type()),
+    })
+  }
 
 	var toConn net.Conn
 	var err error
@@ -87,7 +94,11 @@ func (tun *SSHTun) forward(fromConn net.Conn) {
 		defer connCancel()
 		_, err = io.Copy(toConn, fromConn)
 		if err != nil {
-			return fmt.Errorf("failed copying bytes from remote to local: %w", err)
+			if tun.forwardType == Local {
+				return fmt.Errorf("failed copying bytes from remote to local: %w", err)
+			} else if tun.forwardType == Remote {
+				return fmt.Errorf("failed copying bytes from local to remote: %w", err)
+			}
 		}
 		return toConn.Close()
 	})
@@ -96,7 +107,11 @@ func (tun *SSHTun) forward(fromConn net.Conn) {
 		defer connCancel()
 		_, err = io.Copy(fromConn, toConn)
 		if err != nil {
-			return fmt.Errorf("failed copying bytes from local to remote: %w", err)
+			if tun.forwardType == Local {
+				return fmt.Errorf("failed copying bytes from local to remote: %w", err)
+			} else if tun.forwardType == Remote {
+				return fmt.Errorf("failed copying bytes from remote to local: %w", err)
+			}
 		}
 		return fromConn.Close()
 	})
@@ -112,6 +127,7 @@ func (tun *SSHTun) forward(fromConn net.Conn) {
 			tun.tunneledState(&TunneledConnState{
 				From:  from,
 				Error: err,
+				Closed: true,
 			})
 		}
 	}
