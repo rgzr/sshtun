@@ -19,7 +19,7 @@ type TunneledConnState struct {
 	Error error
 	// Ready indicates if the connection is established.
 	Ready bool
-	// Closed indicates if the coonnection is closed.
+	// Closed indicates if the connection is closed.
 	Closed bool
 }
 
