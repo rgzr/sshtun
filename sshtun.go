@@ -249,7 +249,7 @@ func (tun *SSHTun) Start(ctx context.Context) error {
 		if err != nil {
 			return tun.stop(fmt.Errorf("ssh dial %s to %s failed: %w", tun.server.Type(), tun.server.String(), err)
 		}
-		listener, err = sshClient.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", tun.remote.port))
+		listener, err = sshClient.Listen(tun.remote.Type(), tun.remote.String())
 		if err != nil {
 			return tun.stop(fmt.Errorf("remote listen %s on %s failed: %w", tun.remote.Type(), tun.remote.String(), err))
 		}	
