@@ -62,7 +62,7 @@ func (tun *SSHTun) forward(fromConn net.Conn) {
 		if err != nil {
 			tun.tunneledState(&TunneledConnState{
 				From:  from,
-				Error: fmt.Errorf("remote dial %s to %s failed: %w", tun.local.Type(), tun.local.String(), err),
+				Error: fmt.Errorf("local dial %s to %s failed: %w", tun.local.Type(), tun.local.String(), err),
 			})
 
 			fromConn.Close()
