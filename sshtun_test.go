@@ -41,7 +41,7 @@ func newTestServers(localPort, sshPort, remotePort int) *testServers {
 		},
 	}
 
-	sshTun := New(localPort, "localhost", remotePort, Local)
+	sshTun := New(localPort, "localhost", remotePort)
 	sshTun.SetPort(sshPort)
 
 	return &testServers{

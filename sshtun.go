@@ -69,14 +69,23 @@ const (
 // Calling SetKeyFile will change the authentication to keyfile based..
 // The SSH user and port can be changed with SetUser and SetPort.
 // The local and remote hosts can be changed to something different than localhost with SetLocalEndpoint and SetRemoteEndpoint.
+// The forward type can be changed with SetForwardType.
 // The states of the tunnel can be received throgh a callback function with SetConnState.
 // The states of the tunneled connections can be received through a callback function with SetTunneledConnState.
-func New(localPort int, server string, remotePort int, forwardType ForwardType) *SSHTun {
+func New(localPort int, server string, remotePort int) *SSHTun {
 	sshTun := defaultSSHTun(server)
 	sshTun.local = NewTCPEndpoint("localhost", localPort)
 	sshTun.remote = NewTCPEndpoint("localhost", remotePort)
-	sshTun.forwardType = forwardType
 	return sshTun
+}
+
+// NewRemote does the same as New but for a remote port forward.
+func NewRemote(localPort int, server string, remotePort int) *SSHTun {
+  sshTun := defaultSSHTun(server)
+  sshTun.local = NewTCPEndpoint("localhost", localPort)
+  sshTun.remote = NewTCPEndpoint("localhost", remotePort)
+  sshTun.forwardType = Remote
+  return sshTun
 }
 
 // NewUnix does the same as New but using unix sockets.
@@ -87,6 +96,15 @@ func NewUnix(localUnixSocket string, server string, remoteUnixSocket string) *SS
 	return sshTun
 }
 
+// NewUnixRemote does the same as NewRemote but using unix sockets.
+func NewUnixRemote(localUnixSocket string, server string, remoteUnixSocket string) *SSHTun {
+	sshTun := defaultSSHTun(server)
+	sshTun.local = NewUnixEndpoint(localUnixSocket)
+	sshTun.remote = NewUnixEndpoint(remoteUnixSocket)
+	sshTun.forwardType = Remote
+	return sshTun
+}
+
 func defaultSSHTun(server string) *SSHTun {
 	return &SSHTun{
 		mutex:    &sync.Mutex{},
@@ -94,6 +112,7 @@ func defaultSSHTun(server string) *SSHTun {
 		user:     "root",
 		authType: AuthTypeAuto,
 		timeout:  time.Second * 15,
+		forwardType: Local,
 	}
 }
 
@@ -135,6 +154,11 @@ func (tun *SSHTun) SetEncryptedKeyReader(reader io.Reader, password string) {
 	tun.authType = AuthTypeEncryptedKeyReader
 	tun.authKeyReader = reader
 	tun.authPassword = password
+}
+
+// SetForwardType changes the forward type.
+func (tun *SSHTun) SetForwardType(forwardType ForwardType) {
+	tun.forwardType = forwardType
 }
 
 // SetSSHAgent changes the authentication to ssh-agent.
