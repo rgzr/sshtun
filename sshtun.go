@@ -15,25 +15,28 @@ import (
 
 // SSHTun represents a SSH tunnel
 type SSHTun struct {
-	mutex             *sync.Mutex
-	ctx               context.Context
-	cancel            context.CancelFunc
-	started           bool
-	user              string
-	authType          AuthType
-	authKeyFile       string
-	authKeyReader     io.Reader
-	authPassword      string
-	server            *Endpoint
-	local             *Endpoint
-	remote            *Endpoint
-	forwardType       ForwardType
-	timeout           time.Duration
-	connState         func(*SSHTun, ConnState)
-	tunneledConnState func(*SSHTun, *TunneledConnState)
-	active            int
-	sshClient         *ssh.Client
-	sshConfig         *ssh.ClientConfig
+	mutex                 *sync.Mutex
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	started               bool
+	user                  string
+	authType              AuthType
+	authKeyFile           string
+	authKeyReader         io.Reader
+	authPassword          string
+	server                *Endpoint
+	local                 *Endpoint
+	remote                *Endpoint
+	forwardType           ForwardType
+	timeout               time.Duration
+	connState             func(*SSHTun, ConnState)
+	tunneledConnState     func(*SSHTun, *TunneledConnState)
+	active                int
+	sshClient             *ssh.Client
+	sshConfig             *ssh.ClientConfig
+	sshConfigKeyExchanges []string
+	sshConfigCiphers      []string
+	sshConfigMACs         []string
 }
 
 // ForwardType is the type of port forwarding.
@@ -115,6 +118,24 @@ func defaultSSHTun(server string) *SSHTun {
 // SetPort changes the port where the SSH connection will be made.
 func (tun *SSHTun) SetPort(port int) {
 	tun.server.port = port
+}
+
+// Set KeyExchanges
+// supported, forbidden and preferred algos are in https://pkg.go.dev/golang.org/x/crypto/ssh#Config
+func (tun *SSHTun) SetKeyExchanges(keyExchanges []string) {
+	tun.sshConfigKeyExchanges = keyExchanges
+}
+
+// Set ssh Ciphers
+// preferred and supported ciphers are in https://pkg.go.dev/golang.org/x/crypto/ssh#Config
+func (tun *SSHTun) SetCiphers(ciphers []string) {
+	tun.sshConfigCiphers = ciphers
+}
+
+// Set MACs
+// supported MACs are in https://pkg.go.dev/golang.org/x/crypto/ssh#Config
+func (tun *SSHTun) SetMACs(MACs []string) {
+	tun.sshConfigMACs = MACs
 }
 
 // SetUser changes the user used to make the SSH connection.
@@ -274,6 +295,11 @@ func (tun *SSHTun) Stop() {
 
 func (tun *SSHTun) initSSHConfig() (*ssh.ClientConfig, error) {
 	config := &ssh.ClientConfig{
+		Config: ssh.Config{
+			KeyExchanges: tun.sshConfigKeyExchanges,
+			Ciphers:      tun.sshConfigCiphers,
+			MACs:         tun.sshConfigMACs,
+		},
 		User: tun.user,
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			return nil
