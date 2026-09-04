@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/avast/retry-go"
+	retry "github.com/avast/retry-go/v5"
 	"github.com/gliderlabs/ssh"
-	"github.com/phayes/freeport"
+	"github.com/projectdiscovery/freeport"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 )
@@ -242,16 +242,16 @@ func (c *pingPongClient) close() error {
 func runTestServers(t *testing.T, forwardType ForwardType) (*testServers, chan error, context.CancelFunc) {
 	t.Helper()
 
-	sshPort, err := freeport.GetFreePort()
+	sshPort, err := freeport.GetFreePort("127.0.0.1", freeport.TCP)
 	require.NoError(t, err)
 
-	localPort, err := freeport.GetFreePort()
+	localPort, err := freeport.GetFreePort("127.0.0.1", freeport.TCP)
 	require.NoError(t, err)
 
-	remotePort, err := freeport.GetFreePort()
+	remotePort, err := freeport.GetFreePort("127.0.0.1", freeport.TCP)
 	require.NoError(t, err)
 
-	testServers := newTestServers(localPort, sshPort, remotePort, forwardType)
+	testServers := newTestServers(localPort.Port, sshPort.Port, remotePort.Port, forwardType)
 
 	testServers.sshTun.SetConnState(func(tun *SSHTun, connState ConnState) {
 		switch connState {
@@ -291,10 +291,10 @@ func pingPongConnect(t *testing.T, testServers *testServers) *pingPongClient {
 	var client *pingPongClient
 	var err error
 
-	err = retry.Do(func() error {
+	err = retry.New(retry.Attempts(5), retry.Delay(500*time.Millisecond)).Do(func() error {
 		client, err = testServers.connectPingPong()
 		return err
-	}, retry.Attempts(5), retry.Delay(500*time.Millisecond))
+	})
 
 	require.NoError(t, err)
 
@@ -394,9 +394,9 @@ func TestReconnectTunnel(t *testing.T) {
 	err = client.close()
 	require.NoError(t, err)
 
-	err = retry.Do(func() error {
+	err = retry.New(retry.Attempts(5), retry.Delay(500*time.Millisecond)).Do(func() error {
 		return checkTunConnections(t, testServers, 0)
-	}, retry.Attempts(5), retry.Delay(500*time.Millisecond))
+	})
 
 	require.NoError(t, err)
 
@@ -486,9 +486,9 @@ func TestReconnectRemoteTunnel(t *testing.T) {
 	err = client.close()
 	require.NoError(t, err)
 
-	err = retry.Do(func() error {
+	err = retry.New(retry.Attempts(5), retry.Delay(500*time.Millisecond)).Do(func() error {
 		return checkTunConnections(t, testServers, 0)
-	}, retry.Attempts(5), retry.Delay(500*time.Millisecond))
+	})
 
 	require.NoError(t, err)
 
